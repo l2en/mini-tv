@@ -233,9 +233,18 @@ public class DLNARenderer {
             } else if ("/RenderingControl/control".equals(uri) && Method.POST.equals(method)) {
                 return handleRenderingControl(session);
             } else if ("/AVTransport/event".equals(uri)) {
-                return newFixedLengthResponse(Response.Status.OK, "text/xml", "");
+                // 处理事件订阅（SUBSCRIBE 请求）
+                Log.d(TAG, "AVTransport event 请求, method=" + method);
+                Response resp = newFixedLengthResponse(Response.Status.OK, "text/xml", "");
+                resp.addHeader("SID", "uuid:" + java.util.UUID.randomUUID().toString());
+                resp.addHeader("TIMEOUT", "Second-1800");
+                return resp;
             } else if ("/RenderingControl/event".equals(uri)) {
-                return newFixedLengthResponse(Response.Status.OK, "text/xml", "");
+                Log.d(TAG, "RenderingControl event 请求, method=" + method);
+                Response resp = newFixedLengthResponse(Response.Status.OK, "text/xml", "");
+                resp.addHeader("SID", "uuid:" + java.util.UUID.randomUUID().toString());
+                resp.addHeader("TIMEOUT", "Second-1800");
+                return resp;
             }
 
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not Found");
@@ -405,28 +414,36 @@ public class DLNARenderer {
                 if (soapAction == null) soapAction = "";
                 soapAction = soapAction.replace("\"", "");
 
-                Log.d(TAG, "SOAP Action: " + soapAction);
-                Log.d(TAG, "SOAP Body: " + postData.substring(0, Math.min(postData.length(), 500)));
+                // 提取 action 名称（取 # 后面的部分）
+                String actionName = soapAction;
+                int hashIdx = soapAction.lastIndexOf("#");
+                if (hashIdx >= 0) {
+                    actionName = soapAction.substring(hashIdx + 1);
+                }
 
-                if (soapAction.contains("SetAVTransportURI")) {
+                Log.d(TAG, "AVTransport Action: " + actionName + " (full: " + soapAction + ")");
+
+                // 用精确匹配代替 contains，避免误匹配
+                if ("SetAVTransportURI".equals(actionName)) {
                     return handleSetAVTransportURI(postData);
-                } else if (soapAction.contains("Play")) {
+                } else if ("Play".equals(actionName)) {
                     return handlePlay();
-                } else if (soapAction.contains("Pause")) {
+                } else if ("Pause".equals(actionName)) {
                     return handlePause();
-                } else if (soapAction.contains("Stop")) {
+                } else if ("Stop".equals(actionName)) {
                     return handleStop();
-                } else if (soapAction.contains("Seek")) {
+                } else if ("Seek".equals(actionName)) {
                     return handleSeek(postData);
-                } else if (soapAction.contains("GetTransportInfo")) {
+                } else if ("GetTransportInfo".equals(actionName)) {
                     return handleGetTransportInfo();
-                } else if (soapAction.contains("GetPositionInfo")) {
+                } else if ("GetPositionInfo".equals(actionName)) {
                     return handleGetPositionInfo();
-                } else if (soapAction.contains("GetMediaInfo")) {
+                } else if ("GetMediaInfo".equals(actionName)) {
                     return handleGetMediaInfo();
                 }
 
-                return soapResponse("", "");
+                Log.w(TAG, "未处理的 AVTransport action: " + actionName);
+                return soapResponseAVT(actionName, "");
             } catch (Exception e) {
                 Log.e(TAG, "处理 AVTransport 请求失败", e);
                 return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/xml", "");
@@ -435,7 +452,11 @@ public class DLNARenderer {
 
         private Response handleSetAVTransportURI(String postData) {
             currentURI = extractXmlValue(postData, "CurrentURI");
+            // XML 解码 URI（B 站可能对 URL 中的 & 等字符做了 XML 编码）
+            currentURI = currentURI.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
             String metaData = extractXmlValue(postData, "CurrentURIMetaData");
+            // 元数据可能是 XML 编码的
+            metaData = metaData.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"");
 
             currentTitle = "投屏视频";
             if (metaData != null && metaData.contains("dc:title")) {
@@ -446,32 +467,46 @@ public class DLNARenderer {
             }
 
             transportState = "STOPPED";
-            Log.d(TAG, "SetAVTransportURI: " + currentURI + " title: " + currentTitle);
+            Log.d(TAG, "SetAVTransportURI: " + currentURI);
+            Log.d(TAG, "Title: " + currentTitle);
 
             // 通知桌面更新状态
             Intent statusIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
             statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "准备播放: " + currentTitle);
             context.sendBroadcast(statusIntent);
 
-            return soapResponse("SetAVTransportURI", "");
+            return soapResponseAVT("SetAVTransportURI", "");
         }
 
         private Response handlePlay() {
             Log.d(TAG, "Play: " + currentURI);
-            transportState = "PLAYING";
+            // 先设为 TRANSITIONING，给视频准备时间
+            transportState = "TRANSITIONING";
 
-            // 直接用 Intent 启动 VideoPlayerActivity（不通过广播，避免生命周期问题）
+            // 直接用 Intent 启动 VideoPlayerActivity
             Intent videoIntent = new Intent(context, VideoPlayerActivity.class);
             videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_URL, currentURI);
             videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_TITLE, currentTitle);
             videoIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(videoIntent);
 
+            // 延迟 2 秒后设为 PLAYING
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                    if ("TRANSITIONING".equals(transportState)) {
+                        transportState = "PLAYING";
+                        Log.d(TAG, "状态切换为 PLAYING");
+                    }
+                }
+            }).start();
+
             Intent statusIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
             statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "正在播放: " + currentTitle);
             context.sendBroadcast(statusIntent);
 
-            return soapResponse("Play", "");
+            return soapResponseAVT("Play", "");
         }
 
         private Response handlePause() {
@@ -486,7 +521,7 @@ public class DLNARenderer {
             statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "已暂停");
             context.sendBroadcast(statusIntent);
 
-            return soapResponse("Pause", "");
+            return soapResponseAVT("Pause", "");
         }
 
         private Response handleStop() {
@@ -501,7 +536,7 @@ public class DLNARenderer {
             statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "等待投屏...");
             context.sendBroadcast(statusIntent);
 
-            return soapResponse("Stop", "");
+            return soapResponseAVT("Stop", "");
         }
 
         private Response handleSeek(String postData) {
@@ -514,14 +549,15 @@ public class DLNARenderer {
             controlIntent.putExtra(VideoPlayerActivity.EXTRA_SEEK_POSITION, position);
             context.sendBroadcast(controlIntent);
 
-            return soapResponse("Seek", "");
+            return soapResponseAVT("Seek", "");
         }
 
         private Response handleGetTransportInfo() {
+            Log.d(TAG, "GetTransportInfo -> " + transportState);
             String body = "<CurrentTransportState>" + transportState + "</CurrentTransportState>\n" +
                     "<CurrentTransportStatus>OK</CurrentTransportStatus>\n" +
                     "<CurrentSpeed>1</CurrentSpeed>";
-            return soapResponse("GetTransportInfo", body);
+            return soapResponseAVT("GetTransportInfo", body);
         }
 
         private Response handleGetPositionInfo() {
@@ -541,7 +577,7 @@ public class DLNARenderer {
                     "<AbsTime>" + relTime + "</AbsTime>\n" +
                     "<RelCount>2147483647</RelCount>\n" +
                     "<AbsCount>2147483647</AbsCount>";
-            return soapResponse("GetPositionInfo", body);
+            return soapResponseAVT("GetPositionInfo", body);
         }
 
         private Response handleGetMediaInfo() {
@@ -554,7 +590,7 @@ public class DLNARenderer {
                     "<PlayMedium>NETWORK</PlayMedium>\n" +
                     "<RecordMedium>NOT_IMPLEMENTED</RecordMedium>\n" +
                     "<WriteStatus>NOT_IMPLEMENTED</WriteStatus>";
-            return soapResponse("GetMediaInfo", body);
+            return soapResponseAVT("GetMediaInfo", body);
         }
 
         private Response handleRenderingControl(IHTTPSession session) {
@@ -563,30 +599,53 @@ public class DLNARenderer {
                 session.parseBody(body);
                 String soapAction = session.getHeaders().get("soapaction");
                 if (soapAction == null) soapAction = "";
+                soapAction = soapAction.replace("\"", "");
 
-                if (soapAction.contains("GetVolume")) {
-                    return soapResponse("GetVolume", "<CurrentVolume>50</CurrentVolume>");
-                } else if (soapAction.contains("GetMute")) {
-                    return soapResponse("GetMute", "<CurrentMute>0</CurrentMute>");
-                } else if (soapAction.contains("SetVolume")) {
-                    return soapResponse("SetVolume", "");
-                } else if (soapAction.contains("SetMute")) {
-                    return soapResponse("SetMute", "");
+                String actionName = soapAction;
+                int hashIdx = soapAction.lastIndexOf("#");
+                if (hashIdx >= 0) {
+                    actionName = soapAction.substring(hashIdx + 1);
+                }
+                Log.d(TAG, "RenderingControl Action: " + actionName);
+
+                if ("GetVolume".equals(actionName)) {
+                    return soapResponseRC("GetVolume", "<CurrentVolume>50</CurrentVolume>");
+                } else if ("GetMute".equals(actionName)) {
+                    return soapResponseRC("GetMute", "<CurrentMute>0</CurrentMute>");
+                } else if ("SetVolume".equals(actionName)) {
+                    return soapResponseRC("SetVolume", "");
+                } else if ("SetMute".equals(actionName)) {
+                    return soapResponseRC("SetMute", "");
                 }
 
-                return soapResponse("", "");
+                return soapResponseRC(actionName, "");
             } catch (Exception e) {
                 Log.e(TAG, "处理 RenderingControl 请求失败", e);
                 return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/xml", "");
             }
         }
 
-        private Response soapResponse(String actionName, String body) {
+        /** AVTransport SOAP 响应 */
+        private Response soapResponseAVT(String actionName, String body) {
             String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                     "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" " +
                     "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n" +
                     "  <s:Body>\n" +
                     "    <u:" + actionName + "Response xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\">\n" +
+                    body + "\n" +
+                    "    </u:" + actionName + "Response>\n" +
+                    "  </s:Body>\n" +
+                    "</s:Envelope>";
+            return newFixedLengthResponse(Response.Status.OK, "text/xml; charset=\"utf-8\"", xml);
+        }
+
+        /** RenderingControl SOAP 响应 */
+        private Response soapResponseRC(String actionName, String body) {
+            String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                    "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" " +
+                    "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n" +
+                    "  <s:Body>\n" +
+                    "    <u:" + actionName + "Response xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\">\n" +
                     body + "\n" +
                     "    </u:" + actionName + "Response>\n" +
                     "  </s:Body>\n" +
