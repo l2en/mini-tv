@@ -46,6 +46,27 @@ public class VideoPlayerActivity extends Activity implements
 
     private static VideoPlayerActivity instance;
 
+    // 定期向 DLNARenderer 报告播放进度
+    private Runnable progressUpdater = new Runnable() {
+        @Override
+        public void run() {
+            if (mediaPlayer != null) {
+                try {
+                    com.home.tvlauncher.utils.DLNARenderer renderer =
+                            com.home.tvlauncher.utils.DLNARenderer.getInstance();
+                    if (renderer != null && mediaPlayer.isPlaying()) {
+                        renderer.updatePosition(
+                                mediaPlayer.getCurrentPosition(),
+                                mediaPlayer.getDuration());
+                    }
+                } catch (Exception e) {
+                    // 忽略
+                }
+            }
+            handler.postDelayed(this, 500);
+        }
+    };
+
     private BroadcastReceiver controlReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -186,6 +207,15 @@ public class VideoPlayerActivity extends Activity implements
         Log.d(TAG, "视频准备完成，时长: " + mp.getDuration() + "ms，开始播放");
         try {
             mp.start();
+            // 通知 DLNARenderer 状态为 PLAYING
+            com.home.tvlauncher.utils.DLNARenderer renderer =
+                    com.home.tvlauncher.utils.DLNARenderer.getInstance();
+            if (renderer != null) {
+                renderer.setTransportState("PLAYING");
+                renderer.updatePosition(0, mp.getDuration());
+            }
+            // 启动进度定期更新
+            handler.post(progressUpdater);
         } catch (Exception e) {
             Log.e(TAG, "start 失败", e);
             showErrorAndFinish("播放启动失败");
@@ -257,6 +287,7 @@ public class VideoPlayerActivity extends Activity implements
     }
 
     private void releasePlayer() {
+        handler.removeCallbacks(progressUpdater);
         if (mediaPlayer != null) {
             try {
                 mediaPlayer.stop();

@@ -38,11 +38,34 @@ public class DLNARenderer {
     private String currentTitle = "";
     private String transportState = "NO_MEDIA_PRESENT";
 
+    // 播放进度缓存（由 VideoPlayerActivity 定期更新，避免跨线程调用 MediaPlayer）
+    private volatile long cachedPosition = 0;
+    private volatile long cachedDuration = 0;
+
+    private static DLNARenderer instance;
+
     public DLNARenderer(Context context, String deviceName) {
         this.context = context.getApplicationContext();
         this.deviceName = deviceName;
         this.uuid = "uuid:" + UUID.nameUUIDFromBytes("HomeTVLauncher".getBytes()).toString();
         this.localIp = NetworkUtils.getIPAddress(context);
+        instance = this;
+    }
+
+    public static DLNARenderer getInstance() {
+        return instance;
+    }
+
+    /** 由 VideoPlayerActivity 调用，更新播放进度缓存 */
+    public void updatePosition(long position, long duration) {
+        this.cachedPosition = position;
+        this.cachedDuration = duration;
+    }
+
+    /** 由 VideoPlayerActivity 调用，通知播放状态变化 */
+    public void setTransportState(String state) {
+        this.transportState = state;
+        Log.d(TAG, "transportState -> " + state);
     }
 
     public void start() throws IOException {
@@ -561,13 +584,9 @@ public class DLNARenderer {
         }
 
         private Response handleGetPositionInfo() {
-            VideoPlayerActivity player = VideoPlayerActivity.getInstance();
-            String relTime = "00:00:00";
-            String duration = "00:00:00";
-            if (player != null) {
-                relTime = formatMillisToTime(player.getCurrentPosition());
-                duration = formatMillisToTime(player.getDuration());
-            }
+            String relTime = formatMillisToTime(cachedPosition);
+            String duration = formatMillisToTime(cachedDuration);
+            Log.d(TAG, "GetPositionInfo -> pos=" + relTime + " dur=" + duration);
 
             String body = "<Track>1</Track>\n" +
                     "<TrackDuration>" + duration + "</TrackDuration>\n" +
