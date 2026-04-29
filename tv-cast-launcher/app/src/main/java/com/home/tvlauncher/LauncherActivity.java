@@ -1,5 +1,7 @@
 package com.home.tvlauncher;
 
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -13,6 +15,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -29,8 +32,28 @@ public class LauncherActivity extends Activity {
     private TextView deviceNameText;
     private TextView ipAddressText;
     private TextView statusText;
+    private LinearLayout rootLayout;
     private Handler handler;
     private Runnable ipUpdateRunnable;
+
+    // 7 种儿童友好的柔和色
+    private static final int[] COLORS = {
+            0xFFE6F4FF, // 浅天蓝
+            0xFFFFF3E0, // 暖橙奶油
+            0xFFE8F5E9, // 薄荷绿
+            0xFFFCE4EC, // 樱花粉
+            0xFFF3E5F5, // 淡紫丁香
+            0xFFFFFDE7, // 柠檬奶黄
+            0xFFE0F7FA, // 清澈湖蓝
+    };
+    // 每种背景色对应的文字颜色（保证可读性）
+    private static final int TEXT_DARK = 0xFF333333;
+    private static final int TEXT_MID = 0xFF666666;
+    private static final int TEXT_LIGHT = 0xFF999999;
+
+    private int currentColorIndex = 0;
+    private ValueAnimator colorAnimator;
+    private Runnable colorCycleRunnable;
 
     private BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
@@ -70,10 +93,10 @@ public class LauncherActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
 
         // 创建 UI（纯代码，不使用 XML）
-        LinearLayout rootLayout = new LinearLayout(this);
+        rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setGravity(Gravity.CENTER);
-        rootLayout.setBackgroundColor(Color.parseColor("#E6F4FF"));
+        rootLayout.setBackgroundColor(COLORS[0]);
 
         // 设备名称
         deviceNameText = new TextView(this);
@@ -123,6 +146,35 @@ public class LauncherActivity extends Activity {
         // 启动 DLNA 服务
         Intent serviceIntent = new Intent(this, DLNAService.class);
         startService(serviceIntent);
+
+        // 颜色轮播（每 3 秒切换，1 秒渐变过渡）
+        colorCycleRunnable = new Runnable() {
+            @Override
+            public void run() {
+                int fromColor = COLORS[currentColorIndex];
+                currentColorIndex = (currentColorIndex + 1) % COLORS.length;
+                int toColor = COLORS[currentColorIndex];
+                animateColor(fromColor, toColor);
+                handler.postDelayed(this, 3000);
+            }
+        };
+    }
+
+    private void animateColor(int from, int to) {
+        if (colorAnimator != null) {
+            colorAnimator.cancel();
+        }
+        colorAnimator = ValueAnimator.ofObject(new ArgbEvaluator(), from, to);
+        colorAnimator.setDuration(1000);
+        colorAnimator.setInterpolator(new AccelerateDecelerateInterpolator());
+        colorAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                int color = (int) animation.getAnimatedValue();
+                rootLayout.setBackgroundColor(color);
+            }
+        });
+        colorAnimator.start();
     }
 
     @Override
@@ -137,6 +189,9 @@ public class LauncherActivity extends Activity {
         // 开始定时更新
         handler.post(ipUpdateRunnable);
 
+        // 启动颜色轮播
+        handler.postDelayed(colorCycleRunnable, 3000);
+
         // 隐藏导航栏
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
     }
@@ -150,6 +205,10 @@ public class LauncherActivity extends Activity {
             // 忽略未注册的异常
         }
         handler.removeCallbacks(ipUpdateRunnable);
+        handler.removeCallbacks(colorCycleRunnable);
+        if (colorAnimator != null) {
+            colorAnimator.cancel();
+        }
     }
 
     private void updateDeviceInfo() {
