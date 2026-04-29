@@ -111,8 +111,31 @@ public class VideoPlayerActivity extends Activity {
             @Override
             public boolean onError(MediaPlayer mp, int what, int extra) {
                 Log.e(TAG, "播放错误: what=" + what + " extra=" + extra);
-                finish();
+                // 通知桌面更新状态
+                Intent statusIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
+                statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "播放失败 (错误:" + what + ")");
+                sendBroadcast(statusIntent);
+                // 延迟 3 秒后关闭，让用户看到错误信息
+                videoView.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        Intent waitIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
+                        waitIntent.putExtra(LauncherActivity.EXTRA_STATUS,
+                                getString(R.string.status_waiting));
+                        sendBroadcast(waitIntent);
+                        finish();
+                    }
+                }, 3000);
                 return true;
+            }
+        });
+
+        // 准备好回调 — 确认视频可以播放后再 start
+        videoView.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                Log.d(TAG, "视频准备完成，开始播放");
+                videoView.start();
             }
         });
 
@@ -121,8 +144,9 @@ public class VideoPlayerActivity extends Activity {
         if (videoUrl != null) {
             Log.d(TAG, "播放视频: " + videoUrl);
             videoView.setVideoURI(Uri.parse(videoUrl));
-            videoView.start();
+            // start() 由 onPrepared 回调触发
         } else {
+            Log.e(TAG, "没有收到视频 URL");
             finish();
         }
     }
@@ -130,12 +154,13 @@ public class VideoPlayerActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         // 收到新的视频 URL，切换播放
         String videoUrl = intent.getStringExtra(LauncherActivity.EXTRA_VIDEO_URL);
         if (videoUrl != null && videoView != null) {
             Log.d(TAG, "切换视频: " + videoUrl);
             videoView.setVideoURI(Uri.parse(videoUrl));
-            videoView.start();
+            // start() 由 onPrepared 回调触发
         }
     }
 

@@ -137,9 +137,6 @@ public class LauncherActivity extends Activity {
         // 开始定时更新
         handler.post(ipUpdateRunnable);
 
-        // 恢复等待状态
-        statusText.setText(getString(R.string.status_waiting));
-
         // 隐藏导航栏
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
     }

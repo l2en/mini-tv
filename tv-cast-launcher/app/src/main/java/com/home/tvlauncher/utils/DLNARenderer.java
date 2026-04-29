@@ -438,11 +438,12 @@ public class DLNARenderer {
             Log.d(TAG, "Play: " + currentURI);
             transportState = "PLAYING";
 
-            // 启动视频播放
-            Intent videoIntent = new Intent(LauncherActivity.ACTION_START_VIDEO);
+            // 直接用 Intent 启动 VideoPlayerActivity（不通过广播，避免生命周期问题）
+            Intent videoIntent = new Intent(context, VideoPlayerActivity.class);
             videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_URL, currentURI);
             videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_TITLE, currentTitle);
-            context.sendBroadcast(videoIntent);
+            videoIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(videoIntent);
 
             Intent statusIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
             statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, "正在播放: " + currentTitle);
