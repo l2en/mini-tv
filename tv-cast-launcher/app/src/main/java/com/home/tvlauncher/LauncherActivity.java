@@ -1,27 +1,43 @@
 package com.home.tvlauncher;
 
-import android.animation.ArgbEvaluator;
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.home.tvlauncher.utils.NetworkUtils;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+
 public class LauncherActivity extends Activity {
+
+    private static final String TAG = "Launcher";
 
     public static final String ACTION_UPDATE_STATUS = "com.home.tvlauncher.UPDATE_STATUS";
     public static final String EXTRA_STATUS = "status";
@@ -29,31 +45,26 @@ public class LauncherActivity extends Activity {
     public static final String EXTRA_VIDEO_URL = "video_url";
     public static final String EXTRA_VIDEO_TITLE = "video_title";
 
+    private static final String BING_API = "https://cn.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=zh-CN";
+    private static final String BING_BASE = "https://cn.bing.com";
+    private static final int SLIDE_INTERVAL = 10000; // 10 秒轮播
+
+    private FrameLayout rootLayout;
+    private ImageView imageViewA;
+    private ImageView imageViewB;
+    private LinearLayout infoOverlay;
     private TextView deviceNameText;
     private TextView ipAddressText;
     private TextView statusText;
-    private LinearLayout rootLayout;
+
     private Handler handler;
     private Runnable ipUpdateRunnable;
+    private Runnable slideRunnable;
 
-    // 7 种儿童友好的柔和色
-    private static final int[] COLORS = {
-            0xFFE6F4FF, // 浅天蓝
-            0xFFFFF3E0, // 暖橙奶油
-            0xFFE8F5E9, // 薄荷绿
-            0xFFFCE4EC, // 樱花粉
-            0xFFF3E5F5, // 淡紫丁香
-            0xFFFFFDE7, // 柠檬奶黄
-            0xFFE0F7FA, // 清澈湖蓝
-    };
-    // 每种背景色对应的文字颜色（保证可读性）
-    private static final int TEXT_DARK = 0xFF333333;
-    private static final int TEXT_MID = 0xFF666666;
-    private static final int TEXT_LIGHT = 0xFF999999;
-
-    private int currentColorIndex = 0;
-    private ValueAnimator colorAnimator;
-    private Runnable colorCycleRunnable;
+    private List<String> imageUrls = new ArrayList<String>();
+    private List<Bitmap> cachedBitmaps = new ArrayList<Bitmap>();
+    private int currentIndex = 0;
+    private boolean showingA = true; // 当前显示的是 imageViewA
 
     private BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
@@ -88,53 +99,79 @@ public class LauncherActivity extends Activity {
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-
-        // 隐藏导航栏（API 14+）
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
 
-        // 创建 UI（纯代码，不使用 XML）
-        rootLayout = new LinearLayout(this);
-        rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setGravity(Gravity.CENTER);
-        rootLayout.setBackgroundColor(COLORS[0]);
+        // 根布局：FrameLayout 叠加两个 ImageView + 信息浮层
+        rootLayout = new FrameLayout(this);
+        rootLayout.setBackgroundColor(Color.parseColor("#E6F4FF"));
 
-        // 设备名称
+        // 两个 ImageView 用于交叉淡入淡出
+        imageViewA = new ImageView(this);
+        imageViewA.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        rootLayout.addView(imageViewA, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        imageViewB = new ImageView(this);
+        imageViewB.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        imageViewB.setAlpha(0f);
+        rootLayout.addView(imageViewB, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // 信息浮层（半透明背景 + 文字）
+        infoOverlay = new LinearLayout(this);
+        infoOverlay.setOrientation(LinearLayout.VERTICAL);
+        infoOverlay.setGravity(Gravity.CENTER);
+        infoOverlay.setBackgroundColor(0x66000000); // 40% 黑色半透明
+        infoOverlay.setPadding(dpToPx(40), dpToPx(20), dpToPx(40), dpToPx(20));
+
         deviceNameText = new TextView(this);
         deviceNameText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
-        deviceNameText.setTextColor(Color.parseColor("#333333"));
+        deviceNameText.setTextColor(0xFFFFFFFF);
         deviceNameText.setGravity(Gravity.CENTER);
+        deviceNameText.setShadowLayer(4, 0, 0, 0xFF000000);
         LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        nameParams.bottomMargin = dpToPx(16);
-        rootLayout.addView(deviceNameText, nameParams);
+        nameParams.bottomMargin = dpToPx(8);
+        infoOverlay.addView(deviceNameText, nameParams);
 
-        // IP 地址
         ipAddressText = new TextView(this);
-        ipAddressText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
-        ipAddressText.setTextColor(Color.parseColor("#666666"));
+        ipAddressText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        ipAddressText.setTextColor(0xDDFFFFFF);
         ipAddressText.setGravity(Gravity.CENTER);
+        ipAddressText.setShadowLayer(4, 0, 0, 0xFF000000);
         LinearLayout.LayoutParams ipParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        ipParams.bottomMargin = dpToPx(32);
-        rootLayout.addView(ipAddressText, ipParams);
+        ipParams.bottomMargin = dpToPx(16);
+        infoOverlay.addView(ipAddressText, ipParams);
 
-        // 投屏状态
         statusText = new TextView(this);
-        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        statusText.setTextColor(Color.parseColor("#999999"));
+        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        statusText.setTextColor(0xAAFFFFFF);
         statusText.setGravity(Gravity.CENTER);
+        statusText.setShadowLayer(4, 0, 0, 0xFF000000);
         statusText.setText(getString(R.string.status_waiting));
-        rootLayout.addView(statusText);
+        infoOverlay.addView(statusText);
+
+        // 信息浮层放在底部居中
+        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        overlayParams.gravity = Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM;
+        overlayParams.bottomMargin = dpToPx(60);
+        rootLayout.addView(infoOverlay, overlayParams);
 
         setContentView(rootLayout);
+
+        handler = new Handler();
 
         // 更新设备信息
         updateDeviceInfo();
 
         // 定时更新 IP（每 30 秒）
-        handler = new Handler();
         ipUpdateRunnable = new Runnable() {
             @Override
             public void run() {
@@ -143,56 +180,166 @@ public class LauncherActivity extends Activity {
             }
         };
 
+        // 图片轮播
+        slideRunnable = new Runnable() {
+            @Override
+            public void run() {
+                showNextImage();
+                handler.postDelayed(this, SLIDE_INTERVAL);
+            }
+        };
+
         // 启动 DLNA 服务
         Intent serviceIntent = new Intent(this, DLNAService.class);
         startService(serviceIntent);
 
-        // 颜色轮播（每 3 秒切换，1 秒渐变过渡）
-        colorCycleRunnable = new Runnable() {
-            @Override
-            public void run() {
-                int fromColor = COLORS[currentColorIndex];
-                currentColorIndex = (currentColorIndex + 1) % COLORS.length;
-                int toColor = COLORS[currentColorIndex];
-                animateColor(fromColor, toColor);
-                handler.postDelayed(this, 3000);
-            }
-        };
+        // 后台加载 Bing 壁纸
+        loadBingWallpapers();
     }
 
-    private void animateColor(int from, int to) {
-        if (colorAnimator != null) {
-            colorAnimator.cancel();
-        }
-        colorAnimator = ValueAnimator.ofObject(new ArgbEvaluator(), from, to);
-        colorAnimator.setDuration(1000);
-        colorAnimator.setInterpolator(new AccelerateDecelerateInterpolator());
-        colorAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+    // ========== 图片加载 ==========
+
+    private void loadBingWallpapers() {
+        new Thread(new Runnable() {
             @Override
-            public void onAnimationUpdate(ValueAnimator animation) {
-                int color = (int) animation.getAnimatedValue();
-                rootLayout.setBackgroundColor(color);
+            public void run() {
+                try {
+                    // 获取图片 URL 列表
+                    HttpURLConnection conn = (HttpURLConnection) new URL(BING_API).openConnection();
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(10000);
+                    InputStream is = conn.getInputStream();
+                    byte[] buf = new byte[4096];
+                    StringBuilder sb = new StringBuilder();
+                    int len;
+                    while ((len = is.read(buf)) != -1) {
+                        sb.append(new String(buf, 0, len));
+                    }
+                    is.close();
+                    conn.disconnect();
+
+                    JSONObject json = new JSONObject(sb.toString());
+                    JSONArray images = json.getJSONArray("images");
+                    for (int i = 0; i < images.length(); i++) {
+                        String url = BING_BASE + images.getJSONObject(i).getString("url");
+                        imageUrls.add(url);
+                    }
+                    Log.d(TAG, "获取到 " + imageUrls.size() + " 张 Bing 壁纸");
+
+                    // 预加载前两张
+                    if (imageUrls.size() > 0) {
+                        Bitmap first = downloadBitmap(imageUrls.get(0));
+                        if (first != null) {
+                            cachedBitmaps.add(first);
+                            // 显示第一张
+                            handler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (cachedBitmaps.size() > 0) {
+                                        imageViewA.setImageBitmap(cachedBitmaps.get(0));
+                                        fadeIn(imageViewA);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    if (imageUrls.size() > 1) {
+                        Bitmap second = downloadBitmap(imageUrls.get(1));
+                        if (second != null) {
+                            cachedBitmaps.add(second);
+                        }
+                    }
+
+                    // 后台继续加载剩余图片
+                    for (int i = 2; i < imageUrls.size(); i++) {
+                        Bitmap bmp = downloadBitmap(imageUrls.get(i));
+                        if (bmp != null) {
+                            cachedBitmaps.add(bmp);
+                        }
+                    }
+                    Log.d(TAG, "缓存了 " + cachedBitmaps.size() + " 张壁纸");
+
+                } catch (Exception e) {
+                    Log.e(TAG, "加载 Bing 壁纸失败", e);
+                }
             }
-        });
-        colorAnimator.start();
+        }).start();
     }
+
+    private Bitmap downloadBitmap(String urlStr) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            InputStream is = conn.getInputStream();
+
+            // 降低采样率以节省内存（电视分辨率通常 1920x1080）
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = 1; // Bing 给的就是 1920x1080，不需要缩放
+            opts.inPreferredConfig = Bitmap.Config.RGB_565; // 省一半内存
+            Bitmap bmp = BitmapFactory.decodeStream(is, null, opts);
+
+            is.close();
+            conn.disconnect();
+            return bmp;
+        } catch (Exception e) {
+            Log.e(TAG, "下载图片失败: " + urlStr, e);
+            return null;
+        }
+    }
+
+    // ========== 轮播切换 ==========
+
+    private void showNextImage() {
+        if (cachedBitmaps.size() < 2) return;
+
+        currentIndex = (currentIndex + 1) % cachedBitmaps.size();
+        Bitmap nextBitmap = cachedBitmaps.get(currentIndex);
+
+        if (showingA) {
+            // A 正在显示，把 B 设为下一张，淡入 B 淡出 A
+            imageViewB.setImageBitmap(nextBitmap);
+            crossFade(imageViewB, imageViewA);
+        } else {
+            // B 正在显示，把 A 设为下一张，淡入 A 淡出 B
+            imageViewA.setImageBitmap(nextBitmap);
+            crossFade(imageViewA, imageViewB);
+        }
+        showingA = !showingA;
+    }
+
+    private void crossFade(final View fadeIn, final View fadeOut) {
+        AlphaAnimation animIn = new AlphaAnimation(0f, 1f);
+        animIn.setDuration(1500);
+        animIn.setFillAfter(true);
+        fadeIn.startAnimation(animIn);
+
+        AlphaAnimation animOut = new AlphaAnimation(1f, 0f);
+        animOut.setDuration(1500);
+        animOut.setFillAfter(true);
+        fadeOut.startAnimation(animOut);
+    }
+
+    private void fadeIn(View view) {
+        AlphaAnimation anim = new AlphaAnimation(0f, 1f);
+        anim.setDuration(1000);
+        anim.setFillAfter(true);
+        view.startAnimation(anim);
+    }
+
+    // ========== 生命周期 ==========
 
     @Override
     protected void onResume() {
         super.onResume();
-        // 注册广播接收器
         IntentFilter filter = new IntentFilter();
         filter.addAction(ACTION_UPDATE_STATUS);
         filter.addAction(ACTION_START_VIDEO);
         registerReceiver(statusReceiver, filter);
 
-        // 开始定时更新
         handler.post(ipUpdateRunnable);
+        handler.postDelayed(slideRunnable, SLIDE_INTERVAL);
 
-        // 启动颜色轮播
-        handler.postDelayed(colorCycleRunnable, 3000);
-
-        // 隐藏导航栏
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
     }
 
@@ -202,13 +349,10 @@ public class LauncherActivity extends Activity {
         try {
             unregisterReceiver(statusReceiver);
         } catch (Exception e) {
-            // 忽略未注册的异常
+            // 忽略
         }
         handler.removeCallbacks(ipUpdateRunnable);
-        handler.removeCallbacks(colorCycleRunnable);
-        if (colorAnimator != null) {
-            colorAnimator.cancel();
-        }
+        handler.removeCallbacks(slideRunnable);
     }
 
     private void updateDeviceInfo() {
