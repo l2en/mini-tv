@@ -45,8 +45,7 @@ public class LauncherActivity extends Activity {
     public static final String EXTRA_VIDEO_URL = "video_url";
     public static final String EXTRA_VIDEO_TITLE = "video_title";
 
-    private static final String BING_API = "https://cn.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=zh-CN";
-    private static final String BING_BASE = "https://cn.bing.com";
+    private static final String WALLPAPER_API = "http://192.168.1.4:3456/api/list";
     private static final int SLIDE_INTERVAL = 10000; // 10 秒轮播
 
     private FrameLayout rootLayout;
@@ -193,21 +192,21 @@ public class LauncherActivity extends Activity {
         Intent serviceIntent = new Intent(this, DLNAService.class);
         startService(serviceIntent);
 
-        // 后台加载 Bing 壁纸
-        loadBingWallpapers();
+        // 后台加载壁纸
+        loadWallpapers();
     }
 
     // ========== 图片加载 ==========
 
-    private void loadBingWallpapers() {
+    private void loadWallpapers() {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    // 获取图片 URL 列表
-                    HttpURLConnection conn = (HttpURLConnection) new URL(BING_API).openConnection();
-                    conn.setConnectTimeout(10000);
-                    conn.setReadTimeout(10000);
+                    // 从本地 Node 服务获取图片列表
+                    HttpURLConnection conn = (HttpURLConnection) new URL(WALLPAPER_API).openConnection();
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
                     InputStream is = conn.getInputStream();
                     byte[] buf = new byte[4096];
                     StringBuilder sb = new StringBuilder();
@@ -221,17 +220,15 @@ public class LauncherActivity extends Activity {
                     JSONObject json = new JSONObject(sb.toString());
                     JSONArray images = json.getJSONArray("images");
                     for (int i = 0; i < images.length(); i++) {
-                        String url = BING_BASE + images.getJSONObject(i).getString("url");
-                        imageUrls.add(url);
+                        imageUrls.add(images.getString(i));
                     }
-                    Log.d(TAG, "获取到 " + imageUrls.size() + " 张 Bing 壁纸");
+                    Log.d(TAG, "获取到 " + imageUrls.size() + " 张壁纸");
 
                     // 预加载前两张
                     if (imageUrls.size() > 0) {
                         Bitmap first = downloadBitmap(imageUrls.get(0));
                         if (first != null) {
                             cachedBitmaps.add(first);
-                            // 显示第一张
                             handler.post(new Runnable() {
                                 @Override
                                 public void run() {
@@ -260,7 +257,7 @@ public class LauncherActivity extends Activity {
                     Log.d(TAG, "缓存了 " + cachedBitmaps.size() + " 张壁纸");
 
                 } catch (Exception e) {
-                    Log.e(TAG, "加载 Bing 壁纸失败", e);
+                    Log.e(TAG, "加载壁纸失败", e);
                 }
             }
         }).start();
