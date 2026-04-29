@@ -5,10 +5,10 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
@@ -18,7 +18,6 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.animation.AlphaAnimation;
-import android.view.animation.Animation;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -26,13 +25,9 @@ import android.widget.TextView;
 
 import com.home.tvlauncher.utils.NetworkUtils;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class LauncherActivity extends Activity {
@@ -45,13 +40,12 @@ public class LauncherActivity extends Activity {
     public static final String EXTRA_VIDEO_URL = "video_url";
     public static final String EXTRA_VIDEO_TITLE = "video_title";
 
-    private static final String WALLPAPER_API = "http://192.168.1.4:3456/api/list";
+    private static final String WALLPAPER_DIR = "wallpaper";
     private static final int SLIDE_INTERVAL = 10000; // 10 秒轮播
 
     private FrameLayout rootLayout;
     private ImageView imageViewA;
     private ImageView imageViewB;
-    private LinearLayout infoOverlay;
     private TextView deviceNameText;
     private TextView ipAddressText;
     private TextView statusText;
@@ -60,10 +54,9 @@ public class LauncherActivity extends Activity {
     private Runnable ipUpdateRunnable;
     private Runnable slideRunnable;
 
-    private List<String> imageUrls = new ArrayList<String>();
-    private List<Bitmap> cachedBitmaps = new ArrayList<Bitmap>();
+    private List<Bitmap> wallpapers = new ArrayList<Bitmap>();
     private int currentIndex = 0;
-    private boolean showingA = true; // 当前显示的是 imageViewA
+    private boolean showingA = true;
 
     private BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
@@ -92,7 +85,6 @@ public class LauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 全屏
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -100,7 +92,7 @@ public class LauncherActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
 
-        // 根布局：FrameLayout 叠加两个 ImageView + 信息浮层
+        // 根布局
         rootLayout = new FrameLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#E6F4FF"));
 
@@ -118,11 +110,11 @@ public class LauncherActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // 信息浮层（半透明背景 + 文字）
-        infoOverlay = new LinearLayout(this);
+        // 信息浮层
+        LinearLayout infoOverlay = new LinearLayout(this);
         infoOverlay.setOrientation(LinearLayout.VERTICAL);
         infoOverlay.setGravity(Gravity.CENTER);
-        infoOverlay.setBackgroundColor(0x66000000); // 40% 黑色半透明
+        infoOverlay.setBackgroundColor(0x66000000);
         infoOverlay.setPadding(dpToPx(40), dpToPx(20), dpToPx(40), dpToPx(20));
 
         deviceNameText = new TextView(this);
@@ -155,7 +147,6 @@ public class LauncherActivity extends Activity {
         statusText.setText(getString(R.string.status_waiting));
         infoOverlay.addView(statusText);
 
-        // 信息浮层放在底部居中
         FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT);
@@ -166,11 +157,8 @@ public class LauncherActivity extends Activity {
         setContentView(rootLayout);
 
         handler = new Handler();
-
-        // 更新设备信息
         updateDeviceInfo();
 
-        // 定时更新 IP（每 30 秒）
         ipUpdateRunnable = new Runnable() {
             @Override
             public void run() {
@@ -179,7 +167,6 @@ public class LauncherActivity extends Activity {
             }
         };
 
-        // 图片轮播
         slideRunnable = new Runnable() {
             @Override
             public void run() {
@@ -189,123 +176,79 @@ public class LauncherActivity extends Activity {
         };
 
         // 启动 DLNA 服务
-        Intent serviceIntent = new Intent(this, DLNAService.class);
-        startService(serviceIntent);
+        startService(new Intent(this, DLNAService.class));
 
-        // 后台加载壁纸
-        loadWallpapers();
+        // 从 assets 加载壁纸
+        loadWallpapersFromAssets();
     }
 
-    // ========== 图片加载 ==========
+    // ========== 从 assets 加载图片 ==========
 
-    private void loadWallpapers() {
+    private void loadWallpapersFromAssets() {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    // 从本地 Node 服务获取图片列表
-                    HttpURLConnection conn = (HttpURLConnection) new URL(WALLPAPER_API).openConnection();
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(5000);
-                    InputStream is = conn.getInputStream();
-                    byte[] buf = new byte[4096];
-                    StringBuilder sb = new StringBuilder();
-                    int len;
-                    while ((len = is.read(buf)) != -1) {
-                        sb.append(new String(buf, 0, len));
+                    AssetManager am = getAssets();
+                    String[] files = am.list(WALLPAPER_DIR);
+                    if (files == null || files.length == 0) {
+                        Log.w(TAG, "assets/wallpaper/ 目录为空");
+                        return;
                     }
-                    is.close();
-                    conn.disconnect();
+                    Arrays.sort(files);
+                    Log.d(TAG, "发现 " + files.length + " 张壁纸");
 
-                    JSONObject json = new JSONObject(sb.toString());
-                    JSONArray images = json.getJSONArray("images");
-                    for (int i = 0; i < images.length(); i++) {
-                        imageUrls.add(images.getString(i));
-                    }
-                    Log.d(TAG, "获取到 " + imageUrls.size() + " 张壁纸");
-
-                    // 预加载前两张
-                    if (imageUrls.size() > 0) {
-                        Bitmap first = downloadBitmap(imageUrls.get(0));
-                        if (first != null) {
-                            cachedBitmaps.add(first);
-                            handler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (cachedBitmaps.size() > 0) {
-                                        imageViewA.setImageBitmap(cachedBitmaps.get(0));
-                                        fadeIn(imageViewA);
-                                    }
+                    for (String file : files) {
+                        if (file.startsWith(".")) continue;
+                        try {
+                            InputStream is = am.open(WALLPAPER_DIR + "/" + file);
+                            BitmapFactory.Options opts = new BitmapFactory.Options();
+                            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+                            Bitmap bmp = BitmapFactory.decodeStream(is, null, opts);
+                            is.close();
+                            if (bmp != null) {
+                                wallpapers.add(bmp);
+                                // 第一张加载完立即显示
+                                if (wallpapers.size() == 1) {
+                                    handler.post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            imageViewA.setImageBitmap(wallpapers.get(0));
+                                            fadeIn(imageViewA);
+                                        }
+                                    });
                                 }
-                            });
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "加载图片失败: " + file, e);
                         }
                     }
-                    if (imageUrls.size() > 1) {
-                        Bitmap second = downloadBitmap(imageUrls.get(1));
-                        if (second != null) {
-                            cachedBitmaps.add(second);
-                        }
-                    }
-
-                    // 后台继续加载剩余图片
-                    for (int i = 2; i < imageUrls.size(); i++) {
-                        Bitmap bmp = downloadBitmap(imageUrls.get(i));
-                        if (bmp != null) {
-                            cachedBitmaps.add(bmp);
-                        }
-                    }
-                    Log.d(TAG, "缓存了 " + cachedBitmaps.size() + " 张壁纸");
-
+                    Log.d(TAG, "加载完成，共 " + wallpapers.size() + " 张");
                 } catch (Exception e) {
-                    Log.e(TAG, "加载壁纸失败", e);
+                    Log.e(TAG, "读取 assets 失败", e);
                 }
             }
         }).start();
     }
 
-    private Bitmap downloadBitmap(String urlStr) {
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
-            InputStream is = conn.getInputStream();
-
-            // 降低采样率以节省内存（电视分辨率通常 1920x1080）
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inSampleSize = 1; // Bing 给的就是 1920x1080，不需要缩放
-            opts.inPreferredConfig = Bitmap.Config.RGB_565; // 省一半内存
-            Bitmap bmp = BitmapFactory.decodeStream(is, null, opts);
-
-            is.close();
-            conn.disconnect();
-            return bmp;
-        } catch (Exception e) {
-            Log.e(TAG, "下载图片失败: " + urlStr, e);
-            return null;
-        }
-    }
-
-    // ========== 轮播切换 ==========
+    // ========== 轮播 ==========
 
     private void showNextImage() {
-        if (cachedBitmaps.size() < 2) return;
-
-        currentIndex = (currentIndex + 1) % cachedBitmaps.size();
-        Bitmap nextBitmap = cachedBitmaps.get(currentIndex);
+        if (wallpapers.size() < 2) return;
+        currentIndex = (currentIndex + 1) % wallpapers.size();
+        Bitmap next = wallpapers.get(currentIndex);
 
         if (showingA) {
-            // A 正在显示，把 B 设为下一张，淡入 B 淡出 A
-            imageViewB.setImageBitmap(nextBitmap);
+            imageViewB.setImageBitmap(next);
             crossFade(imageViewB, imageViewA);
         } else {
-            // B 正在显示，把 A 设为下一张，淡入 A 淡出 B
-            imageViewA.setImageBitmap(nextBitmap);
+            imageViewA.setImageBitmap(next);
             crossFade(imageViewA, imageViewB);
         }
         showingA = !showingA;
     }
 
-    private void crossFade(final View fadeIn, final View fadeOut) {
+    private void crossFade(View fadeIn, View fadeOut) {
         AlphaAnimation animIn = new AlphaAnimation(0f, 1f);
         animIn.setDuration(1500);
         animIn.setFillAfter(true);
@@ -333,34 +276,25 @@ public class LauncherActivity extends Activity {
         filter.addAction(ACTION_UPDATE_STATUS);
         filter.addAction(ACTION_START_VIDEO);
         registerReceiver(statusReceiver, filter);
-
         handler.post(ipUpdateRunnable);
         handler.postDelayed(slideRunnable, SLIDE_INTERVAL);
-
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        try {
-            unregisterReceiver(statusReceiver);
-        } catch (Exception e) {
-            // 忽略
-        }
+        try { unregisterReceiver(statusReceiver); } catch (Exception e) {}
         handler.removeCallbacks(ipUpdateRunnable);
         handler.removeCallbacks(slideRunnable);
     }
 
     private void updateDeviceInfo() {
-        String deviceName = getString(R.string.device_name_prefix);
-        String ip = NetworkUtils.getIPAddress(this);
-        deviceNameText.setText(deviceName);
-        ipAddressText.setText("IP: " + ip);
+        deviceNameText.setText(getString(R.string.device_name_prefix));
+        ipAddressText.setText("IP: " + NetworkUtils.getIPAddress(this));
     }
 
     private int dpToPx(int dp) {
-        float density = getResources().getDisplayMetrics().density;
-        return Math.round(dp * density);
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 }
