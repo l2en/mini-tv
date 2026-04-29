@@ -68,7 +68,20 @@ brew install --cask temurin@17
 
 ## 构建 APK
 
-在项目根目录执行：
+### 方式一：Docker 构建（推荐，新电脑零配置）
+
+只需安装 Docker，无需 JDK、Android SDK：
+
+```bash
+cd tv-cast-launcher
+./build-apk.sh
+```
+
+首次运行会自动下载构建环境（约 5 分钟），之后每次构建只需几秒。
+
+### 方式二：本地构建
+
+需要先完成上面的环境搭建步骤，然后：
 
 ```bash
 cd tv-cast-launcher
