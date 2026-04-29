@@ -15,9 +15,16 @@
 
 只需安装 Docker，无需 JDK、Android SDK：
 
+**macOS / Linux：**
 ```bash
 cd tv-cast-launcher
 ./build-apk.sh
+```
+
+**Windows：**
+```cmd
+cd tv-cast-launcher
+build-apk.bat
 ```
 
 首次运行会自动下载构建环境（约 5 分钟），之后每次构建只需几秒。
