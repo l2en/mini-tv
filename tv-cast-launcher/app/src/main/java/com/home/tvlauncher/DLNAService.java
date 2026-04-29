@@ -29,8 +29,9 @@ public class DLNAService extends Service {
         WifiManager wifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
         if (wifiManager != null) {
             multicastLock = wifiManager.createMulticastLock("DLNAService");
-            multicastLock.setReferenceCounted(true);
+            multicastLock.setReferenceCounted(false);
             multicastLock.acquire();
+            Log.d(TAG, "MulticastLock 已获取");
         }
 
         // 启动为前台服务（防止被系统杀死）

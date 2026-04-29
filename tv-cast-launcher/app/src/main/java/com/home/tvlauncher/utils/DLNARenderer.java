@@ -83,12 +83,33 @@ public class DLNARenderer {
         public void run() {
             try {
                 InetAddress group = InetAddress.getByName(SSDP_ADDR);
-                socket = new MulticastSocket(SSDP_PORT);
+                socket = new MulticastSocket(null);
                 socket.setReuseAddress(true);
+                socket.bind(new java.net.InetSocketAddress(SSDP_PORT));
                 socket.joinGroup(group);
 
-                // 发送 SSDP ALIVE 通知
-                sendAlive();
+                Log.d(TAG, "SSDP socket 绑定成功，端口: " + SSDP_PORT);
+
+                // 发送 SSDP ALIVE 通知（发 3 次，提高可靠性）
+                for (int i = 0; i < 3; i++) {
+                    sendAlive();
+                    try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                }
+
+                // 启动定期 ALIVE 发送线程（每 60 秒）
+                final Thread aliveThread = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        while (running) {
+                            try {
+                                Thread.sleep(60000);
+                                if (running) sendAlive();
+                            } catch (InterruptedException ignored) {}
+                        }
+                    }
+                });
+                aliveThread.setDaemon(true);
+                aliveThread.start();
 
                 byte[] buf = new byte[2048];
                 while (running) {
@@ -106,10 +127,11 @@ public class DLNARenderer {
                     }
                 }
 
+                aliveThread.interrupt();
                 socket.leaveGroup(group);
                 socket.close();
             } catch (Exception e) {
-                Log.e(TAG, "SSDP server error", e);
+                Log.e(TAG, "SSDP server error: " + e.getMessage(), e);
             }
         }
 
