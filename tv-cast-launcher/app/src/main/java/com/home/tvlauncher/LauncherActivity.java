@@ -17,7 +17,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.animation.AlphaAnimation;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -239,32 +238,32 @@ public class LauncherActivity extends Activity {
         Bitmap next = wallpapers.get(currentIndex);
 
         if (showingA) {
+            // A 正在显示（alpha=1），把下一张设到 B，B 从 0 淡入到 1，然后把 A 设为 0
             imageViewB.setImageBitmap(next);
-            crossFade(imageViewB, imageViewA);
+            imageViewB.setAlpha(0f);
+            imageViewB.animate().alpha(1f).setDuration(1500).setListener(new android.animation.AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(android.animation.Animator animation) {
+                    imageViewA.setAlpha(0f);
+                }
+            }).start();
         } else {
+            // B 正在显示（alpha=1），把下一张设到 A，A 从 0 淡入到 1，然后把 B 设为 0
             imageViewA.setImageBitmap(next);
-            crossFade(imageViewA, imageViewB);
+            imageViewA.setAlpha(0f);
+            imageViewA.animate().alpha(1f).setDuration(1500).setListener(new android.animation.AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(android.animation.Animator animation) {
+                    imageViewB.setAlpha(0f);
+                }
+            }).start();
         }
         showingA = !showingA;
     }
 
-    private void crossFade(View fadeIn, View fadeOut) {
-        AlphaAnimation animIn = new AlphaAnimation(0f, 1f);
-        animIn.setDuration(1500);
-        animIn.setFillAfter(true);
-        fadeIn.startAnimation(animIn);
-
-        AlphaAnimation animOut = new AlphaAnimation(1f, 0f);
-        animOut.setDuration(1500);
-        animOut.setFillAfter(true);
-        fadeOut.startAnimation(animOut);
-    }
-
     private void fadeIn(View view) {
-        AlphaAnimation anim = new AlphaAnimation(0f, 1f);
-        anim.setDuration(1000);
-        anim.setFillAfter(true);
-        view.startAnimation(anim);
+        view.setAlpha(0f);
+        view.animate().alpha(1f).setDuration(1000).start();
     }
 
     // ========== 生命周期 ==========
