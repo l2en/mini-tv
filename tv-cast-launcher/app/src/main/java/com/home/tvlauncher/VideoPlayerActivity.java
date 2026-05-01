@@ -23,6 +23,8 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -53,6 +55,8 @@ public class VideoPlayerActivity extends Activity implements
     // 进度条自动隐藏延迟（毫秒）
     private static final int PROGRESS_HIDE_DELAY_SEEK = 1500;  // 快进快退后 1.5 秒隐藏
     private static final int PROGRESS_HIDE_DELAY_DOWN = 1500;  // 按下键后 1.5 秒隐藏
+    // 滑入滑出动画距离（dp）
+    private static final int SLIDE_DISTANCE_DP = 30;
 
     private SurfaceView surfaceView;
     private MediaPlayer mediaPlayer;
@@ -213,10 +217,10 @@ public class VideoPlayerActivity extends Activity implements
         overlay.setOrientation(LinearLayout.HORIZONTAL);
         overlay.setGravity(Gravity.CENTER_VERTICAL);
 
-        // 圆角背景（macOS 风格深色半透明）
+        // 圆角背景（macOS 风格深色半透明，胶囊形圆角）
         GradientDrawable overlayBg = new GradientDrawable();
         overlayBg.setColor(0xCC1C1C1E);
-        overlayBg.setCornerRadius(dpToPx(14));
+        overlayBg.setCornerRadius(dpToPx(100)); // 足够大的圆角 → 胶囊形
         overlay.setBackground(overlayBg);
 
         int padH = dpToPx(24);
@@ -337,7 +341,7 @@ public class VideoPlayerActivity extends Activity implements
     private void showProgressOverlay(int hideDelayMs) {
         if (progressOverlay == null || mediaPlayer == null) return;
 
-        // 取消之前的隐藏计划和正在进行的淡出动画
+        // 取消之前的隐藏计划和正在进行的动画
         handler.removeCallbacks(hideProgressRunnable);
         progressOverlay.animate().cancel();
         if (titleOverlay != null) titleOverlay.animate().cancel();
@@ -345,25 +349,34 @@ public class VideoPlayerActivity extends Activity implements
         // 更新进度数据
         updateProgressBar();
 
+        float slideDist = dpToPx(SLIDE_DISTANCE_DP);
+
         if (!progressVisible) {
-            // 首次显示：设为可见，淡入
             progressVisible = true;
+
+            // 进度条：从底部滑入 + 淡入
             progressOverlay.setVisibility(View.VISIBLE);
             progressOverlay.setAlpha(0f);
+            progressOverlay.setTranslationY(slideDist);
             progressOverlay.animate()
                     .alpha(1f)
-                    .setDuration(250)
+                    .translationY(0f)
+                    .setDuration(350)
+                    .setInterpolator(new DecelerateInterpolator(2.0f))
                     .setListener(null)
                     .start();
 
-            // 同步显示左上角标题
+            // 标题：从顶部滑入 + 淡入
             if (titleOverlay != null && videoTitle != null && !videoTitle.isEmpty()) {
                 titleOverlay.setText(videoTitle);
                 titleOverlay.setVisibility(View.VISIBLE);
                 titleOverlay.setAlpha(0f);
+                titleOverlay.setTranslationY(-slideDist);
                 titleOverlay.animate()
                         .alpha(1f)
-                        .setDuration(250)
+                        .translationY(0f)
+                        .setDuration(350)
+                        .setInterpolator(new DecelerateInterpolator(2.0f))
                         .setListener(null)
                         .start();
             }
@@ -372,10 +385,12 @@ public class VideoPlayerActivity extends Activity implements
             handler.removeCallbacks(progressBarUpdater);
             handler.post(progressBarUpdater);
         } else {
-            // 已经在显示，确保完全不透明
+            // 已经在显示，确保完全可见
             progressOverlay.setAlpha(1f);
+            progressOverlay.setTranslationY(0f);
             if (titleOverlay != null && titleOverlay.getVisibility() == View.VISIBLE) {
                 titleOverlay.setAlpha(1f);
+                titleOverlay.setTranslationY(0f);
             }
         }
 
@@ -383,14 +398,18 @@ public class VideoPlayerActivity extends Activity implements
         handler.postDelayed(hideProgressRunnable, hideDelayMs);
     }
 
-    /** 淡出隐藏进度条和标题 */
+    /** 淡出隐藏进度条和标题（滑出 + 淡出） */
     private void fadeOutProgress() {
         if (progressOverlay == null || !progressVisible) return;
 
-        // 淡出进度条
+        float slideDist = dpToPx(SLIDE_DISTANCE_DP);
+
+        // 进度条：向底部滑出 + 淡出
         progressOverlay.animate()
                 .alpha(0f)
-                .setDuration(400)
+                .translationY(slideDist)
+                .setDuration(300)
+                .setInterpolator(new AccelerateInterpolator(2.0f))
                 .setListener(new android.animation.AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(android.animation.Animator animation) {
@@ -402,11 +421,13 @@ public class VideoPlayerActivity extends Activity implements
                 })
                 .start();
 
-        // 同步淡出标题
+        // 标题：向顶部滑出 + 淡出
         if (titleOverlay != null && titleOverlay.getVisibility() == View.VISIBLE) {
             titleOverlay.animate()
                     .alpha(0f)
-                    .setDuration(400)
+                    .translationY(-slideDist)
+                    .setDuration(300)
+                    .setInterpolator(new AccelerateInterpolator(2.0f))
                     .setListener(new android.animation.AnimatorListenerAdapter() {
                         @Override
                         public void onAnimationEnd(android.animation.Animator animation) {

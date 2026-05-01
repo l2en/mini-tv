@@ -15,7 +15,6 @@ import android.os.Handler;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -62,10 +61,8 @@ public class LauncherActivity extends Activity {
     private boolean showingA = true;
 
     // 二维码相关
-    private View qrOverlay;
-    private boolean qrVisible = false;
-    private long lastUpKeyTime = 0;
-    private static final long DOUBLE_TAP_INTERVAL = 500; // 双击间隔 500ms
+    private View qrCard;
+    private ImageView qrImageView;
 
     // 手机遥控服务器
     private RemoteServer remoteServer;
@@ -316,180 +313,98 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    // ========== 二维码浮层 ==========
+    // ========== 二维码 ==========
 
     private void initQROverlay() {
-        // 外层：全屏半透明遮罩
-        FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundColor(0xBB000000);
-        overlay.setVisibility(View.GONE);
-
-        // 中间卡片：圆角深色背景
+        // 右下角小卡片：圆角深色背景 + 二维码 + 提示文字
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
 
         GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(0xFF1C1C1E);
-        cardBg.setCornerRadius(dpToPx(20));
+        cardBg.setColor(0xCC1C1C1E);
+        cardBg.setCornerRadius(dpToPx(16));
         card.setBackground(cardBg);
-        card.setPadding(dpToPx(32), dpToPx(28), dpToPx(32), dpToPx(28));
+        card.setPadding(dpToPx(16), dpToPx(14), dpToPx(16), dpToPx(14));
 
         // 标题
         TextView title = new TextView(this);
         title.setText("手机遥控");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         title.setTextColor(0xFFFFFFFF);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        titleParams.bottomMargin = dpToPx(6);
+        titleParams.bottomMargin = dpToPx(8);
         card.addView(title, titleParams);
-
-        // 副标题
-        TextView subtitle = new TextView(this);
-        subtitle.setText("用手机扫描二维码，输入视频链接即可播放");
-        subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        subtitle.setTextColor(0x99FFFFFF);
-        subtitle.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        subParams.bottomMargin = dpToPx(20);
-        card.addView(subtitle, subParams);
 
         // 二维码图片（白色圆角背景包裹）
         FrameLayout qrWrapper = new FrameLayout(this);
         GradientDrawable qrBg = new GradientDrawable();
         qrBg.setColor(0xFFFFFFFF);
-        qrBg.setCornerRadius(dpToPx(12));
+        qrBg.setCornerRadius(dpToPx(8));
         qrWrapper.setBackground(qrBg);
-        qrWrapper.setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12));
+        int qrPad = dpToPx(8);
+        qrWrapper.setPadding(qrPad, qrPad, qrPad, qrPad);
 
-        ImageView qrImage = new ImageView(this);
-        qrImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        qrImageView = new ImageView(this);
+        qrImageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
-        // 生成二维码
-        String ip = NetworkUtils.getIPAddress(this);
-        String url = "http://" + ip + ":" + RemoteServer.getPort() + "/remote";
-        Bitmap qrBitmap = QRCodeGenerator.generate(url, dpToPx(180));
-        if (qrBitmap != null) {
-            qrImage.setImageBitmap(qrBitmap);
-        }
-
-        FrameLayout.LayoutParams qrImgParams = new FrameLayout.LayoutParams(
-                dpToPx(180), dpToPx(180));
-        qrWrapper.addView(qrImage, qrImgParams);
+        int qrSize = dpToPx(120);
+        FrameLayout.LayoutParams qrImgParams = new FrameLayout.LayoutParams(qrSize, qrSize);
+        qrWrapper.addView(qrImageView, qrImgParams);
 
         LinearLayout.LayoutParams wrapperParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        wrapperParams.bottomMargin = dpToPx(16);
+        wrapperParams.bottomMargin = dpToPx(6);
         card.addView(qrWrapper, wrapperParams);
 
         // 提示文字
         TextView hint = new TextView(this);
-        hint.setText("按 ↓ 键关闭");
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        hint.setTextColor(0x66FFFFFF);
+        hint.setText("扫码投屏");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(0x88FFFFFF);
         hint.setGravity(Gravity.CENTER);
         card.addView(hint);
 
-        // 卡片居中
+        // 放在右下角
         FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT);
-        cardParams.gravity = Gravity.CENTER;
-        overlay.addView(card, cardParams);
+        cardParams.gravity = Gravity.BOTTOM | Gravity.RIGHT;
+        cardParams.bottomMargin = dpToPx(40);
+        cardParams.rightMargin = dpToPx(40);
+        rootLayout.addView(card, cardParams);
 
-        // 添加到根布局最上层
-        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT);
-        rootLayout.addView(overlay, overlayParams);
+        qrCard = card;
 
-        qrOverlay = overlay;
+        // 生成并显示二维码
+        refreshQRCode();
     }
 
-    private void showQRCode() {
-        if (qrOverlay == null) return;
-
-        // 每次显示时重新生成二维码（IP 可能变化）
+    /** 刷新二维码（IP 变化时调用） */
+    private void refreshQRCode() {
+        if (qrImageView == null) return;
         String ip = NetworkUtils.getIPAddress(this);
         String url = "http://" + ip + ":" + RemoteServer.getPort() + "/remote";
         Log.d(TAG, "二维码 URL: " + url);
 
-        // 找到 ImageView 更新二维码
-        FrameLayout overlay = (FrameLayout) qrOverlay;
-        LinearLayout card = (LinearLayout) overlay.getChildAt(0);
-        FrameLayout qrWrapper = (FrameLayout) card.getChildAt(3); // 第4个子view
-        ImageView qrImage = (ImageView) qrWrapper.getChildAt(0);
-
-        Bitmap qrBitmap = QRCodeGenerator.generate(url, dpToPx(180));
+        Bitmap qrBitmap = QRCodeGenerator.generate(url, dpToPx(120));
         if (qrBitmap != null) {
-            qrImage.setImageBitmap(qrBitmap);
+            qrImageView.setImageBitmap(qrBitmap);
+            Log.d(TAG, "二维码生成成功，尺寸: " + qrBitmap.getWidth() + "x" + qrBitmap.getHeight());
+        } else {
+            Log.e(TAG, "二维码生成失败！URL: " + url);
         }
-
-        qrVisible = true;
-        qrOverlay.setVisibility(View.VISIBLE);
-        qrOverlay.setAlpha(0f);
-        qrOverlay.animate().alpha(1f).setDuration(250).setListener(null).start();
-    }
-
-    private void hideQRCode() {
-        if (qrOverlay == null || !qrVisible) return;
-        qrOverlay.animate()
-                .alpha(0f)
-                .setDuration(250)
-                .setListener(new android.animation.AnimatorListenerAdapter() {
-                    @Override
-                    public void onAnimationEnd(android.animation.Animator animation) {
-                        qrOverlay.setVisibility(View.GONE);
-                        qrVisible = false;
-                        qrOverlay.animate().setListener(null);
-                    }
-                })
-                .start();
-    }
-
-    // ========== 遥控器按键处理 ==========
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_DPAD_UP:
-                if (qrVisible) return true; // 二维码显示时忽略上键
-                long now = System.currentTimeMillis();
-                if (now - lastUpKeyTime < DOUBLE_TAP_INTERVAL) {
-                    // 双击上键 → 显示二维码
-                    lastUpKeyTime = 0;
-                    showQRCode();
-                } else {
-                    lastUpKeyTime = now;
-                }
-                return true;
-
-            case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (qrVisible) {
-                    hideQRCode();
-                    return true;
-                }
-                break;
-
-            case KeyEvent.KEYCODE_BACK:
-                if (qrVisible) {
-                    hideQRCode();
-                    return true;
-                }
-                break;
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     private void updateDeviceInfo() {
         deviceNameText.setText(getString(R.string.device_name_prefix));
         ipAddressText.setText("IP: " + NetworkUtils.getIPAddress(this));
+        // IP 变化时刷新二维码
+        refreshQRCode();
     }
 
     private int dpToPx(int dp) {
