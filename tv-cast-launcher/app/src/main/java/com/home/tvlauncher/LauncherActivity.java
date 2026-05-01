@@ -64,9 +64,6 @@ public class LauncherActivity extends Activity {
     private View qrCard;
     private ImageView qrImageView;
 
-    // 手机遥控服务器
-    private RemoteServer remoteServer;
-
     private BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -184,12 +181,8 @@ public class LauncherActivity extends Activity {
             }
         };
 
-        // 启动 DLNA 服务
+        // 启动 DLNA 服务（RemoteServer 也在其中启动）
         startService(new Intent(this, DLNAService.class));
-
-        // 启动手机遥控 HTTP 服务器
-        remoteServer = new RemoteServer(this);
-        remoteServer.startServer();
 
         // 初始化二维码浮层
         initQROverlay();
@@ -308,9 +301,6 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (remoteServer != null) {
-            remoteServer.stopServer();
-        }
     }
 
     // ========== 二维码 ==========
@@ -329,7 +319,7 @@ public class LauncherActivity extends Activity {
 
         // 标题
         TextView title = new TextView(this);
-        title.setText("手机遥控");
+        title.setText("手机推送");
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         title.setTextColor(0xFFFFFFFF);
         title.setGravity(Gravity.CENTER);

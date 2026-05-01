@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.util.Log;
 
 import com.home.tvlauncher.LauncherActivity;
+import com.home.tvlauncher.VideoPlayerActivity;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -60,7 +61,7 @@ public class RemoteServer extends NanoHTTPD {
             + "<head>\n"
             + "<meta charset=\"UTF-8\">\n"
             + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1\">\n"
-            + "<title>电视遥控</title>\n"
+            + "<title>手机推送</title>\n"
             + "<style>\n"
             + "*{margin:0;padding:0;box-sizing:border-box}\n"
             + "body{font-family:-apple-system,system-ui,sans-serif;background:#000;color:#fff;"
@@ -85,7 +86,7 @@ public class RemoteServer extends NanoHTTPD {
             + "</style>\n"
             + "</head>\n"
             + "<body>\n"
-            + "<h1>电视遥控</h1>\n"
+            + "<h1>手机推送</h1>\n"
             + "<p class=\"sub\">输入视频链接，电视将立即播放</p>\n"
             + "<div class=\"card\">\n"
             + "<label>视频网址</label>\n"
@@ -146,11 +147,12 @@ public class RemoteServer extends NanoHTTPD {
             url = url.trim();
             Log.d(TAG, "收到播放请求: " + url);
 
-            // 通过广播通知 LauncherActivity 播放视频
-            Intent intent = new Intent(LauncherActivity.ACTION_START_VIDEO);
-            intent.putExtra(LauncherActivity.EXTRA_VIDEO_URL, url);
-            intent.putExtra(LauncherActivity.EXTRA_VIDEO_TITLE, "手机推送");
-            context.sendBroadcast(intent);
+            // 直接启动 VideoPlayerActivity（不依赖广播，避免 LauncherActivity paused 时收不到）
+            Intent videoIntent = new Intent(context, VideoPlayerActivity.class);
+            videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_URL, url);
+            videoIntent.putExtra(LauncherActivity.EXTRA_VIDEO_TITLE, "手机推送");
+            videoIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(videoIntent);
 
             return newFixedLengthResponse(Response.Status.OK,
                     "application/json", "{\"ok\":true}");
@@ -162,10 +164,14 @@ public class RemoteServer extends NanoHTTPD {
         }
     }
 
-    /** 启动服务器 */
+    /** 启动服务器（如果已在运行则跳过） */
     public void startServer() {
+        if (isAlive()) {
+            Log.d(TAG, "RemoteServer 已在运行，跳过启动");
+            return;
+        }
         try {
-            start();
+            start(NanoHTTPD.SOCKET_READ_TIMEOUT, false); // 非 daemon 模式，防止被过早回收
             Log.d(TAG, "RemoteServer 已启动，端口: " + PORT);
         } catch (Exception e) {
             Log.e(TAG, "RemoteServer 启动失败", e);

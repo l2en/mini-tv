@@ -27,6 +27,9 @@ public class DLNAService extends Service {
     private Handler handler = new Handler();
     private boolean dlnaStarted = false;
 
+    // 手机推送 HTTP 服务器
+    private com.home.tvlauncher.utils.RemoteServer remoteServer;
+
     // 监听网络变化
     private BroadcastReceiver networkReceiver = new BroadcastReceiver() {
         @Override
@@ -71,6 +74,10 @@ public class DLNAService extends Service {
         } else {
             Log.d(TAG, "当前无网络，等待 Wi-Fi 连接...");
         }
+
+        // 启动手机推送 HTTP 服务器（在 Service 中启动，生命周期稳定）
+        remoteServer = new com.home.tvlauncher.utils.RemoteServer(this);
+        remoteServer.startServer();
     }
 
     private boolean isWifiConnected() {
@@ -163,6 +170,10 @@ public class DLNAService extends Service {
 
         if (dlnaRenderer != null) {
             dlnaRenderer.stop();
+        }
+
+        if (remoteServer != null) {
+            remoteServer.stopServer();
         }
 
         if (multicastLock != null && multicastLock.isHeld()) {
