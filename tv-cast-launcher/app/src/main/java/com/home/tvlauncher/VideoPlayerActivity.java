@@ -5,18 +5,28 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,11 +48,29 @@ public class VideoPlayerActivity extends Activity implements
     public static final String CMD_STOP = "stop";
     public static final String CMD_SEEK = "seek";
 
+    // 快进/快退步长（毫秒）
+    private static final int SEEK_STEP_MS = 10000;
+    // 进度条自动隐藏延迟（毫秒）
+    private static final int PROGRESS_HIDE_DELAY_SEEK = 1500;  // 快进快退后 1.5 秒隐藏
+    private static final int PROGRESS_HIDE_DELAY_DOWN = 1500;  // 按下键后 1.5 秒隐藏
+
     private SurfaceView surfaceView;
     private MediaPlayer mediaPlayer;
     private String pendingUrl;
     private boolean surfaceReady = false;
     private Handler handler = new Handler();
+
+    // 进度条 UI
+    private View progressOverlay;
+    private ProgressBar progressBar;
+    private TextView timeCurrentText;
+    private TextView timeDurationText;
+    private Runnable hideProgressRunnable;
+    private Runnable progressBarUpdater;
+
+    // 左上角标题 UI
+    private TextView titleOverlay;
+    private String videoTitle = "";
 
     private static VideoPlayerActivity instance;
 
@@ -129,6 +157,12 @@ public class VideoPlayerActivity extends Activity implements
 
         surfaceView.getHolder().addCallback(this);
 
+        // 初始化进度条浮层
+        initProgressOverlay(root);
+
+        // 初始化左上角标题浮层
+        initTitleOverlay(root);
+
         // 获取视频 URL
         String videoUrl = getIntent().getStringExtra(LauncherActivity.EXTRA_VIDEO_URL);
         if (videoUrl != null) {
@@ -137,6 +171,12 @@ public class VideoPlayerActivity extends Activity implements
         } else {
             Log.e(TAG, "没有收到视频 URL");
             finish();
+        }
+
+        // 获取视频标题
+        String title = getIntent().getStringExtra(LauncherActivity.EXTRA_VIDEO_TITLE);
+        if (title != null && !title.isEmpty()) {
+            videoTitle = title;
         }
     }
 
@@ -159,6 +199,255 @@ public class VideoPlayerActivity extends Activity implements
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         surfaceReady = false;
+    }
+
+    // ========== 进度条 UI ==========
+
+    /** 进度条是否正在显示 */
+    private boolean progressVisible = false;
+
+    private void initProgressOverlay(FrameLayout root) {
+        // 底部半透明磨砂风格容器（macOS 风格，圆角）
+        // 布局：一行 → [当前时间] [进度条] [总时长]
+        LinearLayout overlay = new LinearLayout(this);
+        overlay.setOrientation(LinearLayout.HORIZONTAL);
+        overlay.setGravity(Gravity.CENTER_VERTICAL);
+
+        // 圆角背景（macOS 风格深色半透明）
+        GradientDrawable overlayBg = new GradientDrawable();
+        overlayBg.setColor(0xCC1C1C1E);
+        overlayBg.setCornerRadius(dpToPx(14));
+        overlay.setBackground(overlayBg);
+
+        int padH = dpToPx(24);
+        int padV = dpToPx(14);
+        overlay.setPadding(padH, padV, padH, padV);
+        overlay.setVisibility(View.INVISIBLE);
+        overlay.setAlpha(0f);
+
+        // 当前时间（左侧）
+        timeCurrentText = new TextView(this);
+        timeCurrentText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        timeCurrentText.setTextColor(0xFFFFFFFF);
+        timeCurrentText.setText("00:00");
+        LinearLayout.LayoutParams currentParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        currentParams.rightMargin = dpToPx(14);
+        overlay.addView(timeCurrentText, currentParams);
+
+        // 中间进度条（占满剩余空间，圆角轨道）
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(1000);
+        progressBar.setProgress(0);
+
+        // 圆角进度条背景（浅灰）
+        GradientDrawable trackBg = new GradientDrawable();
+        trackBg.setColor(0x4DFFFFFF);
+        trackBg.setCornerRadius(dpToPx(2));
+
+        // 圆角进度条前景（白色）
+        GradientDrawable progressFg = new GradientDrawable();
+        progressFg.setColor(0xFFFFFFFF);
+        progressFg.setCornerRadius(dpToPx(2));
+        ClipDrawable progressClip = new ClipDrawable(progressFg, Gravity.LEFT, ClipDrawable.HORIZONTAL);
+
+        LayerDrawable layerDrawable = new LayerDrawable(new Drawable[]{trackBg, progressClip});
+        layerDrawable.setId(0, android.R.id.background);
+        layerDrawable.setId(1, android.R.id.progress);
+        progressBar.setProgressDrawable(layerDrawable);
+
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                0, dpToPx(4), 1f);
+        overlay.addView(progressBar, barParams);
+
+        // 总时长（右侧）
+        timeDurationText = new TextView(this);
+        timeDurationText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        timeDurationText.setTextColor(0x99FFFFFF);
+        timeDurationText.setText("00:00");
+        LinearLayout.LayoutParams durationParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        durationParams.leftMargin = dpToPx(14);
+        overlay.addView(timeDurationText, durationParams);
+
+        // 添加到根布局底部，左右留边距
+        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        overlayParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        overlayParams.bottomMargin = dpToPx(40);
+        overlayParams.leftMargin = dpToPx(48);
+        overlayParams.rightMargin = dpToPx(48);
+        root.addView(overlay, overlayParams);
+
+        progressOverlay = overlay;
+
+        // 隐藏回调
+        hideProgressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                fadeOutProgress();
+            }
+        };
+
+        // 进度条刷新回调（可见时每 500ms 更新）
+        progressBarUpdater = new Runnable() {
+            @Override
+            public void run() {
+                updateProgressBar();
+                if (progressVisible) {
+                    handler.postDelayed(this, 500);
+                }
+            }
+        };
+    }
+
+    // ========== 左上角标题 UI ==========
+
+    private void initTitleOverlay(FrameLayout root) {
+        titleOverlay = new TextView(this);
+        titleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        titleOverlay.setTextColor(0xFFFFFFFF);
+        titleOverlay.setShadowLayer(4, 0, 0, 0xAA000000);
+        titleOverlay.setSingleLine(true);
+        titleOverlay.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleOverlay.setMaxWidth(dpToPx(500));
+        titleOverlay.setVisibility(View.INVISIBLE);
+        titleOverlay.setAlpha(0f);
+
+        // 圆角半透明背景（macOS 风格）
+        GradientDrawable titleBg = new GradientDrawable();
+        titleBg.setColor(0xAA1C1C1E);
+        titleBg.setCornerRadius(dpToPx(10));
+        titleOverlay.setBackground(titleBg);
+        titleOverlay.setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(8));
+
+        FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        titleParams.gravity = Gravity.TOP | Gravity.LEFT;
+        titleParams.topMargin = dpToPx(32);
+        titleParams.leftMargin = dpToPx(40);
+        root.addView(titleOverlay, titleParams);
+    }
+
+    /** 显示进度条并在指定延迟后自动隐藏 */
+    private void showProgressOverlay(int hideDelayMs) {
+        if (progressOverlay == null || mediaPlayer == null) return;
+
+        // 取消之前的隐藏计划和正在进行的淡出动画
+        handler.removeCallbacks(hideProgressRunnable);
+        progressOverlay.animate().cancel();
+        if (titleOverlay != null) titleOverlay.animate().cancel();
+
+        // 更新进度数据
+        updateProgressBar();
+
+        if (!progressVisible) {
+            // 首次显示：设为可见，淡入
+            progressVisible = true;
+            progressOverlay.setVisibility(View.VISIBLE);
+            progressOverlay.setAlpha(0f);
+            progressOverlay.animate()
+                    .alpha(1f)
+                    .setDuration(250)
+                    .setListener(null)
+                    .start();
+
+            // 同步显示左上角标题
+            if (titleOverlay != null && videoTitle != null && !videoTitle.isEmpty()) {
+                titleOverlay.setText(videoTitle);
+                titleOverlay.setVisibility(View.VISIBLE);
+                titleOverlay.setAlpha(0f);
+                titleOverlay.animate()
+                        .alpha(1f)
+                        .setDuration(250)
+                        .setListener(null)
+                        .start();
+            }
+
+            // 启动进度条定时刷新
+            handler.removeCallbacks(progressBarUpdater);
+            handler.post(progressBarUpdater);
+        } else {
+            // 已经在显示，确保完全不透明
+            progressOverlay.setAlpha(1f);
+            if (titleOverlay != null && titleOverlay.getVisibility() == View.VISIBLE) {
+                titleOverlay.setAlpha(1f);
+            }
+        }
+
+        // 设定自动隐藏
+        handler.postDelayed(hideProgressRunnable, hideDelayMs);
+    }
+
+    /** 淡出隐藏进度条和标题 */
+    private void fadeOutProgress() {
+        if (progressOverlay == null || !progressVisible) return;
+
+        // 淡出进度条
+        progressOverlay.animate()
+                .alpha(0f)
+                .setDuration(400)
+                .setListener(new android.animation.AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(android.animation.Animator animation) {
+                        progressVisible = false;
+                        progressOverlay.setVisibility(View.INVISIBLE);
+                        handler.removeCallbacks(progressBarUpdater);
+                        progressOverlay.animate().setListener(null);
+                    }
+                })
+                .start();
+
+        // 同步淡出标题
+        if (titleOverlay != null && titleOverlay.getVisibility() == View.VISIBLE) {
+            titleOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(400)
+                    .setListener(new android.animation.AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(android.animation.Animator animation) {
+                            titleOverlay.setVisibility(View.INVISIBLE);
+                            titleOverlay.animate().setListener(null);
+                        }
+                    })
+                    .start();
+        }
+    }
+
+    /** 刷新进度条和时间文字 */
+    private void updateProgressBar() {
+        if (mediaPlayer == null) return;
+        try {
+            int current = mediaPlayer.getCurrentPosition();
+            int duration = mediaPlayer.getDuration();
+            if (duration > 0) {
+                progressBar.setProgress((int) (1000L * current / duration));
+            }
+            timeCurrentText.setText(formatTime(current));
+            timeDurationText.setText(formatTime(duration));
+        } catch (Exception e) {
+            // 忽略
+        }
+    }
+
+    /** 毫秒转时间字符串，短视频显示 MM:SS，长视频显示 H:MM:SS */
+    private String formatTime(int millis) {
+        int totalSec = millis / 1000;
+        int h = totalSec / 3600;
+        int m = (totalSec % 3600) / 60;
+        int s = totalSec % 60;
+        if (h > 0) {
+            return String.format("%d:%02d:%02d", h, m, s);
+        }
+        return String.format("%02d:%02d", m, s);
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     // ========== 播放控制 ==========
@@ -288,6 +577,8 @@ public class VideoPlayerActivity extends Activity implements
 
     private void releasePlayer() {
         handler.removeCallbacks(progressUpdater);
+        handler.removeCallbacks(hideProgressRunnable);
+        handler.removeCallbacks(progressBarUpdater);
         if (mediaPlayer != null) {
             try {
                 mediaPlayer.stop();
@@ -317,6 +608,13 @@ public class VideoPlayerActivity extends Activity implements
         String videoUrl = intent.getStringExtra(LauncherActivity.EXTRA_VIDEO_URL);
         if (videoUrl != null) {
             Log.d(TAG, "切换视频: " + videoUrl);
+
+            // 更新标题
+            String title = intent.getStringExtra(LauncherActivity.EXTRA_VIDEO_TITLE);
+            if (title != null && !title.isEmpty()) {
+                videoTitle = title;
+            }
+
             if (surfaceReady) {
                 startPlayback(videoUrl);
             } else {
@@ -345,6 +643,115 @@ public class VideoPlayerActivity extends Activity implements
         super.onDestroy();
         instance = null;
         releasePlayer();
+    }
+
+    // ========== 遥控器按键处理 ==========
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (mediaPlayer == null) {
+            return super.onKeyDown(keyCode, event);
+        }
+
+        switch (keyCode) {
+            // OK 键 / 播放暂停键 → 切换播放/暂停
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                togglePlayPause();
+                return true;
+
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+                if (!mediaPlayer.isPlaying()) {
+                    try {
+                        mediaPlayer.start();
+                        updateTransportState("PLAYING");
+                    } catch (Exception e) {
+                        Log.e(TAG, "play error", e);
+                    }
+                }
+                return true;
+
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.pause();
+                    updateTransportState("PAUSED_PLAYBACK");
+                }
+                return true;
+
+            // 左键 → 快退 10 秒
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+                seekRelative(-SEEK_STEP_MS);
+                showProgressOverlay(PROGRESS_HIDE_DELAY_SEEK);
+                return true;
+
+            // 右键 → 快进 10 秒
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                seekRelative(SEEK_STEP_MS);
+                showProgressOverlay(PROGRESS_HIDE_DELAY_SEEK);
+                return true;
+
+            // 下键 → 显示进度条
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                showProgressOverlay(PROGRESS_HIDE_DELAY_DOWN);
+                return true;
+
+            // 返回键 / 停止键 → 停止播放
+            case KeyEvent.KEYCODE_MEDIA_STOP:
+                stopAndFinish();
+                return true;
+        }
+
+        return super.onKeyDown(keyCode, event);
+    }
+
+    /** 切换播放/暂停 */
+    private void togglePlayPause() {
+        try {
+            if (mediaPlayer.isPlaying()) {
+                mediaPlayer.pause();
+                updateTransportState("PAUSED_PLAYBACK");
+            } else {
+                mediaPlayer.start();
+                updateTransportState("PLAYING");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "togglePlayPause error", e);
+        }
+    }
+
+    /** 相对快进/快退 */
+    private void seekRelative(int offsetMs) {
+        try {
+            int current = mediaPlayer.getCurrentPosition();
+            int duration = mediaPlayer.getDuration();
+            int target = current + offsetMs;
+            if (target < 0) target = 0;
+            if (target > duration) target = duration;
+            mediaPlayer.seekTo(target);
+            Log.d(TAG, "Seek: " + current + " -> " + target + " (offset=" + offsetMs + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "seekRelative error", e);
+        }
+    }
+
+    /** 更新 DLNA 传输状态并通知桌面 */
+    private void updateTransportState(String state) {
+        com.home.tvlauncher.utils.DLNARenderer renderer =
+                com.home.tvlauncher.utils.DLNARenderer.getInstance();
+        if (renderer != null) {
+            renderer.setTransportState(state);
+        }
+
+        Intent statusIntent = new Intent(LauncherActivity.ACTION_UPDATE_STATUS);
+        if ("PLAYING".equals(state)) {
+            statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, getString(R.string.status_playing));
+        } else if ("PAUSED_PLAYBACK".equals(state)) {
+            statusIntent.putExtra(LauncherActivity.EXTRA_STATUS, getString(R.string.status_paused));
+        }
+        sendBroadcast(statusIntent);
     }
 
     // ========== 供外部查询 ==========

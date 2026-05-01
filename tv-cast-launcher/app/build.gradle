@@ -27,6 +27,13 @@ android {
     lintOptions {
         abortOnError false
     }
+
+    // 自定义 APK 输出名称
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "mini-tv.apk"
+        }
+    }
 }
 
 dependencies {
